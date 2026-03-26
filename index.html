@@ -155,30 +155,37 @@ function convert() {
 
 /* ── Canvas render with tight padding ── */
 async function toCanvas() {
-  const el = wrap.querySelector('table') || wrap.querySelector('#htmlHost') || wrap;
   if (wrap.classList.contains('empty')) { setStatus('Convert something first!', '#ff3b30'); return null; }
   setStatus('Rendering…');
 
-  // Measure content tightly
-  const target = (mode === 'html') ? (wrap.querySelector('#htmlHost') || wrap) : wrap;
-  const PAD = 20; // slim padding px
+  const target = wrap.querySelector('table') || wrap.querySelector('#htmlHost') || wrap;
+  const PAD = 8; // slim padding px
+
+  // Temporarily shrink to content width so html2canvas doesn't capture full container
+  const savedStyles = { width: target.style.width, display: target.style.display };
+  target.style.width = 'fit-content';
+  target.style.display = 'inline-block';
 
   const canvas = await html2canvas(target, {
     backgroundColor: '#ffffff',
     scale: 2,
     useCORS: true,
     logging: false,
-    x: 0, y: 0,
   });
 
-  // Re-draw with padding
+  // Restore original layout
+  target.style.width = savedStyles.width;
+  target.style.display = savedStyles.display;
+
+  // Re-draw with slim padding
+  const s = 2; // matches scale
   const padded = document.createElement('canvas');
-  padded.width  = canvas.width  + PAD * 2 * 2; // scale=2 so double
-  padded.height = canvas.height + PAD * 2 * 2;
+  padded.width  = canvas.width  + PAD * 2 * s;
+  padded.height = canvas.height + PAD * 2 * s;
   const ctx = padded.getContext('2d');
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, padded.width, padded.height);
-  ctx.drawImage(canvas, PAD * 2, PAD * 2);
+  ctx.drawImage(canvas, PAD * s, PAD * s);
   return padded;
 }
 
