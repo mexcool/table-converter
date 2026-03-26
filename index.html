@@ -153,18 +153,37 @@ function convert() {
   }
 }
 
+/* ── Trim white pixels from canvas edges ── */
+function trimCanvas(canvas) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  const data = ctx.getImageData(0, 0, w, h).data;
+  const isWhite = (x, y) => { const i = (y * w + x) * 4; return data[i] >= 250 && data[i+1] >= 250 && data[i+2] >= 250; };
+
+  let top = 0, bottom = h - 1, left = 0, right = w - 1;
+  // top
+  outer: for (; top < h; top++) for (let x = 0; x < w; x++) if (!isWhite(x, top)) break outer;
+  // bottom
+  outer: for (; bottom > top; bottom--) for (let x = 0; x < w; x++) if (!isWhite(x, bottom)) break outer;
+  // left
+  outer: for (; left < w; left++) for (let y = top; y <= bottom; y++) if (!isWhite(left, y)) break outer;
+  // right
+  outer: for (; right > left; right--) for (let y = top; y <= bottom; y++) if (!isWhite(right, y)) break outer;
+
+  const cw = right - left + 1, ch = bottom - top + 1;
+  const trimmed = document.createElement('canvas');
+  trimmed.width = cw; trimmed.height = ch;
+  trimmed.getContext('2d').drawImage(canvas, left, top, cw, ch, 0, 0, cw, ch);
+  return trimmed;
+}
+
 /* ── Canvas render with tight padding ── */
 async function toCanvas() {
   if (wrap.classList.contains('empty')) { setStatus('Convert something first!', '#ff3b30'); return null; }
   setStatus('Rendering…');
 
   const target = wrap.querySelector('table') || wrap.querySelector('#htmlHost') || wrap;
-  const PAD = 8; // slim padding px
-
-  // Temporarily shrink to content width so html2canvas doesn't capture full container
-  const savedStyles = { width: target.style.width, display: target.style.display };
-  target.style.width = 'fit-content';
-  target.style.display = 'inline-block';
+  const PAD = 8;
 
   const canvas = await html2canvas(target, {
     backgroundColor: '#ffffff',
@@ -173,19 +192,16 @@ async function toCanvas() {
     logging: false,
   });
 
-  // Restore original layout
-  target.style.width = savedStyles.width;
-  target.style.display = savedStyles.display;
-
-  // Re-draw with slim padding
-  const s = 2; // matches scale
+  // Trim whitespace then add slim padding
+  const trimmed = trimCanvas(canvas);
+  const s = 2;
   const padded = document.createElement('canvas');
-  padded.width  = canvas.width  + PAD * 2 * s;
-  padded.height = canvas.height + PAD * 2 * s;
+  padded.width  = trimmed.width  + PAD * 2 * s;
+  padded.height = trimmed.height + PAD * 2 * s;
   const ctx = padded.getContext('2d');
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, padded.width, padded.height);
-  ctx.drawImage(canvas, PAD * s, PAD * s);
+  ctx.drawImage(trimmed, PAD * s, PAD * s);
   return padded;
 }
 
