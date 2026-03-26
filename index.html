@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Table Converter</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#f5f5f7; color:#1d1d1f; padding:24px; min-height:100vh; }
+  h1 { font-size:1.4rem; font-weight:700; margin-bottom:4px; }
+  p.sub { color:#888; font-size:.85rem; margin-bottom:18px; }
+
+  /* Tabs */
+  .tabs { display:flex; gap:0; margin-bottom:14px; background:#e5e5ea; border-radius:9px; padding:3px; width:fit-content; }
+  .tab { padding:6px 18px; border-radius:7px; font-size:.82rem; font-weight:600; cursor:pointer; border:none; background:transparent; color:#666; transition:all .15s; }
+  .tab.active { background:#fff; color:#1d1d1f; box-shadow:0 1px 4px rgba(0,0,0,.12); }
+
+  textarea { width:100%; height:160px; font-family:monospace; font-size:.8rem; padding:12px; border:1px solid #ddd; border-radius:10px; resize:vertical; background:#fff; outline:none; transition:border .15s; }
+  textarea:focus { border-color:#0071e3; }
+
+  .controls { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0 6px; }
+  button { padding:8px 16px; border:none; border-radius:8px; font-size:.82rem; font-weight:600; cursor:pointer; transition:opacity .15s; }
+  button:hover { opacity:.78; }
+  #convertBtn  { background:#0071e3; color:#fff; }
+  #copyImgBtn  { background:#34c759; color:#fff; }
+  #dlBtn       { background:#ff9500; color:#fff; }
+  #copyHtmlBtn { background:#555; color:#fff; }
+
+  #status { font-size:.78rem; color:#888; min-height:16px; margin-bottom:10px; }
+
+  /* Render area */
+  .preview-outer { background:#fff; border-radius:12px; box-shadow:0 1px 6px rgba(0,0,0,.08); overflow:hidden; }
+  #renderWrap { padding:16px; overflow-x:auto; }
+  #renderWrap.empty p { color:#bbb; font-size:.88rem; padding:8px 0; }
+
+  /* Default table styles (used for raw data mode) */
+  #renderWrap.table-mode table { border-collapse:collapse; font-size:.83rem; width:100%; }
+  #renderWrap.table-mode th { background:#0071e3; color:#fff; padding:9px 13px; text-align:left; font-weight:600; }
+  #renderWrap.table-mode td { padding:8px 13px; border-bottom:1px solid #e5e5ea; }
+  #renderWrap.table-mode tr:nth-child(even) td { background:#f9f9fb; }
+  #renderWrap.table-mode tr:hover td { background:#eef4ff; }
+
+  /* Image preview */
+  #imgPreview { display:none; margin-top:14px; }
+  #imgPreview img { max-width:100%; border-radius:8px; border:1px solid #ddd; }
+  #imgPreview p { font-size:.75rem; color:#aaa; margin-top:5px; }
+</style>
+</head>
+<body>
+
+<h1>Table Converter</h1>
+<p class="sub">Paste raw table data or HTML — export as image</p>
+
+<div class="tabs">
+  <button class="tab active" id="tabRaw" onclick="switchTab('raw')">Raw Data</button>
+  <button class="tab" id="tabHtml" onclick="switchTab('html')">HTML</button>
+</div>
+
+<textarea id="input" placeholder="Paste tab-separated, pipe-separated, or space-aligned table data…"></textarea>
+
+<div class="controls">
+  <button id="convertBtn" onclick="convert()">Convert →</button>
+  <button id="copyImgBtn" onclick="copyImg()">📋 Copy as Image</button>
+  <button id="dlBtn" onclick="downloadImg()">⬇️ Download Image</button>
+  <button id="copyHtmlBtn" onclick="copyHtml()">Copy HTML</button>
+</div>
+<div id="status"></div>
+
+<div class="preview-outer">
+  <div id="renderWrap" class="empty">
+    <p>Output will appear here</p>
+  </div>
+</div>
+
+<div id="imgPreview">
+  <img id="imgEl" src="" alt="">
+  <p>Right-click → Copy Image, or use the buttons above</p>
+</div>
+
+<script>
+const inputEl   = document.getElementById('input');
+const wrap      = document.getElementById('renderWrap');
+const statusEl  = document.getElementById('status');
+const imgPreview = document.getElementById('imgPreview');
+const imgEl     = document.getElementById('imgEl');
+
+let mode = 'raw'; // 'raw' | 'html'
+
+function switchTab(t) {
+  mode = t;
+  document.getElementById('tabRaw').classList.toggle('active', t === 'raw');
+  document.getElementById('tabHtml').classList.toggle('active', t === 'html');
+  inputEl.placeholder = t === 'raw'
+    ? 'Paste tab-separated, pipe-separated, or space-aligned table data…'
+    : 'Paste your HTML here…';
+  inputEl.value = '';
+  wrap.innerHTML = '<p>Output will appear here</p>';
+  wrap.className = 'empty';
+  imgPreview.style.display = 'none';
+  setStatus('');
+}
+
+function setStatus(msg, color='#888') {
+  statusEl.style.color = color;
+  statusEl.textContent = msg;
+}
+
+/* ── Raw data parser ── */
+function parseTable(raw) {
+  const lines = raw.trim().split('\n').filter(l => l.trim());
+  const hasTabs = lines[0].includes('\t');
+  const hasPipe = lines[0].includes('|');
+  return lines.map(line => {
+    if (hasTabs) return line.split('\t').map(c => c.trim());
+    if (hasPipe) return line.split('|').map(c => c.trim()).filter((c,i,a) => !(i===0&&!c) && !(i===a.length-1&&!c));
+    return line.trim().split(/\s{2,}/).map(c => c.trim());
+  }).filter(r => r.length > 0 && !r.every(c => /^[-=+|]+$/.test(c)));
+}
+
+function buildTable(rows) {
+  const [header, ...body] = rows;
+  let h = '<table><thead><tr>';
+  header.forEach(c => h += `<th>${c}</th>`);
+  h += '</tr></thead><tbody>';
+  body.forEach(r => { h += '<tr>'; r.forEach(c => h += `<td>${c}</td>`); h += '</tr>'; });
+  return h + '</tbody></table>';
+}
+
+/* ── Convert ── */
+function convert() {
+  const raw = inputEl.value.trim();
+  if (!raw) { setStatus('Paste some data first!', '#ff3b30'); return; }
+
+  imgPreview.style.display = 'none';
+  imgEl.src = '';
+
+  if (mode === 'html') {
+    // Inject HTML directly — wrap in a scoped div so its own styles apply
+    wrap.innerHTML = `<div id="htmlHost">${raw}</div>`;
+    wrap.className = 'html-mode';
+    setStatus('HTML rendered ✓', '#34c759');
+  } else {
+    try {
+      const rows = parseTable(raw);
+      if (!rows.length) throw new Error();
+      wrap.innerHTML = buildTable(rows);
+      wrap.className = 'table-mode';
+      setStatus('Table converted ✓', '#34c759');
+    } catch {
+      setStatus('Could not parse — try using tabs as separators.', '#ff3b30');
+    }
+  }
+}
+
+/* ── Canvas render with tight padding ── */
+async function toCanvas() {
+  const el = wrap.querySelector('table') || wrap.querySelector('#htmlHost') || wrap;
+  if (wrap.classList.contains('empty')) { setStatus('Convert something first!', '#ff3b30'); return null; }
+  setStatus('Rendering…');
+
+  // Measure content tightly
+  const target = (mode === 'html') ? (wrap.querySelector('#htmlHost') || wrap) : wrap;
+  const PAD = 20; // slim padding px
+
+  const canvas = await html2canvas(target, {
+    backgroundColor: '#ffffff',
+    scale: 2,
+    useCORS: true,
+    logging: false,
+    x: 0, y: 0,
+  });
+
+  // Re-draw with padding
+  const padded = document.createElement('canvas');
+  padded.width  = canvas.width  + PAD * 2 * 2; // scale=2 so double
+  padded.height = canvas.height + PAD * 2 * 2;
+  const ctx = padded.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, padded.width, padded.height);
+  ctx.drawImage(canvas, PAD * 2, PAD * 2);
+  return padded;
+}
+
+async function copyImg() {
+  const canvas = await toCanvas();
+  if (!canvas) return;
+  const dataUrl = canvas.toDataURL('image/png');
+  imgEl.src = dataUrl;
+  imgPreview.style.display = 'block';
+  try {
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+    await navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
+    setStatus('✅ Copied to clipboard! Paste anywhere.', '#34c759');
+  } catch {
+    setStatus('⚠️ Clipboard blocked — right-click the preview image → Copy Image', '#ff9500');
+  }
+}
+
+async function downloadImg() {
+  const canvas = await toCanvas();
+  if (!canvas) return;
+  const a = document.createElement('a');
+  a.download = 'table.png';
+  a.href = canvas.toDataURL('image/png');
+  a.click();
+  setStatus('✅ Downloaded!', '#34c759');
+}
+
+function copyHtml() {
+  const t = wrap.querySelector('table') || wrap.querySelector('#htmlHost');
+  if (!t) { setStatus('Convert something first!', '#ff3b30'); return; }
+  navigator.clipboard.writeText(t.outerHTML)
+    .then(() => setStatus('✅ HTML copied!', '#34c759'))
+    .catch(() => setStatus('Could not copy HTML.', '#ff3b30'));
+}
+
+// Pre-fill example
+inputEl.value = `Region / Key Cities\tAvg High Feb\tAvg High Mar\tTypical Lows\tVibe & Scenery\tBest For
+🇬🇪 Georgia (Tbilisi)\t7–10 °C\t13–17 °C\t–2 → 6 °C\tWinter → early spring\tCultural trips
+🇬🇷 Greece (Athens)\t13–15 °C\t16–18 °C\t6–10 °C\tBright winter light\tCity exploring
+🇹🇷 Turkey (Istanbul)\t8–12 °C\t13–17 °C\t3–7 °C\tWintry charm → spring\tCulture, food
+🇲🇦 Morocco (Agadir)\t20–22 °C\t22–24 °C\t11–13 °C\tSunny, dry coast\tSurfing, hiking`;
+</script>
+</body>
+</html>
